@@ -2,10 +2,9 @@
 import mammoth from "mammoth";
 import { createRequire } from "module";
 import fs from "fs";
-import os from "os";
-import path from "path";
 import Tesseract from "tesseract.js";
-import pdfPoppler from "pdf-poppler";
+import pdfjsLib from "pdfjs-dist/legacy/build/pdf.js";
+
 
 const require = createRequire(import.meta.url);
 
@@ -32,48 +31,20 @@ const isImage = (file) => file.mimetype.startsWith("image/");
 const ocrImageBuffer = async (buffer) => {
   const {
     data: { text },
-  } = await Tesseract.recognize(buffer, "eng", {
-    logger: () => {},
-  });
+  } = await Tesseract.recognize(
+    new Uint8Array(buffer),
+    "eng",
+    { logger: () => {} }
+  );
   return text?.trim() || "";
 };
 
-// OCR PDF buffer → PDF → images → OCR
-const ocrPdfBuffer = async (buffer) => {
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-ocr-"));
-  const pdfPath = path.join(tempDir, "input.pdf");
-
-  fs.writeFileSync(pdfPath, buffer);
-
-  // ✅ CORRECT API
-  await pdfPoppler.convert(pdfPath, {
-    format: "png",
-    out_dir: tempDir,
-    out_prefix: "page",
-    page: null,
-  });
-
-  const imageFiles = fs
-    .readdirSync(tempDir)
-    .filter((f) => f.endsWith(".png"));
-
-  let fullText = "";
-
-  for (const img of imageFiles) {
-    const {
-      data: { text },
-    } = await Tesseract.recognize(
-      path.join(tempDir, img),
-      "eng",
-      { logger: () => {} }
-    );
-
-    fullText += "\n" + text;
-  }
-
-  fs.rmSync(tempDir, { recursive: true, force: true });
-  return fullText.trim();
+const ocrPdfBuffer = async () => {
+  throw new Error(
+    "Scanned PDF detected. OCR for scanned PDFs is not supported without canvas/Docker."
+  );
 };
+
 
 /* =========================================================
    MAIN: Extract text from PDF / Image / DOCX
@@ -84,21 +55,30 @@ export const extractReceiptText = async (file) => {
   }
 
   // ---------- PDF ----------
-  if (isPdf(file)) {
-    let text = "";
+if (isPdf(file)) {
+  const pdf = await pdfjsLib.getDocument({
+    data: new Uint8Array(file.buffer),
+  }).promise;
 
-    try {
-      const data = await pdfParse(file.buffer);
-      text = data.text?.trim() || "";
-    } catch {}
+  let text = "";
 
-    if (text && text.length > 10) {
-      return text;
-    }
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const page = await pdf.getPage(i);
+    const content = await page.getTextContent();
 
-    console.log("⚠️ No text found in PDF, running OCR...");
-    return await ocrPdfBuffer(file.buffer);
+    text += content.items.map((item) => item.str).join(" ") + "\n";
   }
+
+  text = text.trim();
+
+  if (text.length > 20) {
+    return text;
+  }
+
+  console.log("⚠️ Scanned PDF detected → OCR fallback");
+  return await ocrPdfBuffer(file.buffer);
+}
+
 
   // ---------- IMAGE ----------
   if (isImage(file)) {
