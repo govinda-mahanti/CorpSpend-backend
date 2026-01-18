@@ -502,15 +502,23 @@ import {
   receiptResponseSchema,
   formatGroqResponse,
 } from "../utils/extract.js";
-const parseDDMMYYYY = (dateStr) => {
-  if (!dateStr) return null;
+const parseDateSmart = (dateStr) => {
+  if (!dateStr) return new Date();
 
-  const parts = dateStr.split("/");
-  if (parts.length !== 3) return null;
+  // Accept ISO / yyyy-mm-dd / timestamps
+  const d1 = new Date(dateStr);
+  if (!isNaN(d1.getTime())) return d1;
 
-  const [dd, mm, yyyy] = parts;
-  return new Date(`${yyyy}-${mm}-${dd}`);
+  // Accept DD/MM/YYYY
+  const m = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (m) {
+    const [, dd, mm, yyyy] = m;
+    return new Date(`${yyyy}-${mm}-${dd}`);
+  }
+
+  return null;
 };
+
 
 export const uploadReceipt = async (req, res) => {
   try {
@@ -564,9 +572,9 @@ ${receiptText}
 
     console.log("Formatted Receipt Data:", formattedData);
 
-    const parsedDate = formattedData.dateIncurred
-      ? parseDDMMYYYY(formattedData.dateIncurred)
-      : new Date();
+ const parsedDate =
+  parseDateSmart(formattedData.dateIncurred) || new Date();
+
 
     if (!parsedDate || isNaN(parsedDate.getTime())) {
       return res.status(400).json({
